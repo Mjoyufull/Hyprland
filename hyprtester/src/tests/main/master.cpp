@@ -4,7 +4,27 @@
 #include <algorithm>
 #include <vector>
 #include <thread>
+#include <string>
 #include "tests.hpp"
+
+static int clientHeight(const std::string& cls) {
+    const auto clients = getFromSocket("/clients");
+    const auto tag     = "class: " + cls;
+    const auto pos     = clients.find(tag);
+    if (pos == std::string::npos)
+        return -1;
+
+    const auto sizePos = clients.find("size: ", pos);
+    if (sizePos == std::string::npos)
+        return -1;
+
+    const auto comma = clients.find(',', sizePos);
+    if (comma == std::string::npos)
+        return -1;
+
+    const auto lineEnd = clients.find('\n', comma);
+    return std::stoi(clients.substr(comma + 1, lineEnd - comma - 1));
+}
 
 TEST_CASE(focusMasterPrevious) {
     OK(getFromSocket("r/eval hl.config({ general = { layout = 'master' } })"));
@@ -242,4 +262,42 @@ TEST_CASE(focusMasterClose) {
     while (Tests::processAlive(pids[2]))
         std::this_thread::sleep_for(std::chrono::milliseconds(25l));
     ASSERT_CONTAINS(getFromSocket("/activewindow"), "class: master");
+}
+
+TEST_CASE(masterKeyboardResize) {
+    OK(getFromSocket("r/eval hl.config({ general = { layout = 'master' } })"));
+
+    for (auto const& win : {"slave1", "slave2", "master"}) {
+        if (!Tests::spawnKitty(win)) {
+            FAIL_TEST("Could not spawn kitty with win class `{}`", win);
+        }
+    }
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:slave2' })"));
+
+    const int bottomBefore = clientHeight("slave2");
+    OK(getFromSocket("/dispatch hl.dsp.window.resize({ x = 0, y = -40, relative = true })"));
+    const int bottomAfter = clientHeight("slave2");
+
+    if (bottomAfter <= bottomBefore)
+        FAIL_TEST("slave2 should grow on keyboard up, got {} -> {}", bottomBefore, bottomAfter);
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:slave1' })"));
+
+    const int topBefore = clientHeight("slave1");
+    OK(getFromSocket("/dispatch hl.dsp.window.resize({ x = 0, y = -40, relative = true })"));
+    const int topAfter = clientHeight("slave1");
+
+    if (topAfter <= topBefore)
+        FAIL_TEST("slave1 should grow on keyboard up, got {} -> {}", topBefore, topAfter);
+
+    OK(getFromSocket("r/eval hl.config({ master = { smart_resizing = false } })"));
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:slave2' })"));
+
+    const int offBefore = clientHeight("slave2");
+    OK(getFromSocket("/dispatch hl.dsp.window.resize({ x = 0, y = -40, relative = true })"));
+    const int offAfter = clientHeight("slave2");
+
+    if (offAfter <= offBefore)
+        FAIL_TEST("slave2 should grow with smart_resizing off, got {} -> {}", offBefore, offAfter);
 }

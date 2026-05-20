@@ -311,64 +311,83 @@ void CMasterAlgorithm::resizeTarget(const Vector2D& Δ, SP<ITarget> target, eRec
     const auto SIZE = isStackVertical ? WORKAREA.h / nodesInSameColumn : WORKAREA.w / nodesInSameColumn;
 
     if (RESIZEDELTA != 0 && nodesInSameColumn > 1) {
-        if (!*PSMARTRESIZING) {
-            PNODE->percSize = std::clamp(PNODE->percSize + RESIZEDELTA / SIZE, 0.05, 1.95);
-        } else {
-            const auto  NODEIT    = std::ranges::find(m_masterNodesData, PNODE);
-            const auto  REVNODEIT = std::ranges::find(m_masterNodesData | std::views::reverse, PNODE);
+        const auto  NODEIT    = std::ranges::find(m_masterNodesData, PNODE);
+        const auto  REVNODEIT = std::ranges::find(m_masterNodesData | std::views::reverse, PNODE);
 
-            const float totalSize       = isStackVertical ? WORKAREA.h : WORKAREA.w;
-            const float minSize         = totalSize / nodesInSameColumn * 0.2;
-            const bool  resizePrevNodes = isStackVertical ? (TOP || DISPLAYBOTTOM) && !DISPLAYTOP : (LEFT || DISPLAYRIGHT) && !DISPLAYLEFT;
+        const float totalSize = isStackVertical ? WORKAREA.h : WORKAREA.w;
+        const float minSize   = totalSize / nodesInSameColumn * 0.2;
 
-            int         nodesLeft = 0;
-            float       sizeLeft  = 0;
-            int         nodeCount = 0;
-            // check the sizes of all the nodes to be resized for later calculation
-            auto checkNodesLeft = [&sizeLeft, &nodesLeft, orientation, isStackVertical, &nodeCount, PNODE](auto it) {
-                if (it->isMaster != PNODE->isMaster)
-                    return;
-                nodeCount++;
-                if (!it->isMaster && orientation == ORIENTATION_CENTER && nodeCount % 2 == 1)
-                    return;
-                sizeLeft += isStackVertical ? it->size.y : it->size.x;
-                nodesLeft++;
-            };
-            float resizeDiff;
-            if (resizePrevNodes) {
-                std::for_each(std::next(REVNODEIT), m_masterNodesData.rend(), checkNodesLeft);
-                resizeDiff = -RESIZEDELTA;
-            } else {
-                std::for_each(std::next(NODEIT), m_masterNodesData.end(), checkNodesLeft);
-                resizeDiff = RESIZEDELTA;
-            }
-
-            const float nodeSize        = isStackVertical ? PNODE->size.y : PNODE->size.x;
-            const float maxSizeIncrease = sizeLeft - nodesLeft * minSize;
-            const float maxSizeDecrease = minSize - nodeSize;
-
-            // leaves enough room for the other nodes
-            resizeDiff = std::clamp(resizeDiff, maxSizeDecrease, maxSizeIncrease);
-            PNODE->percSize += resizeDiff / SIZE;
-
-            // resize the other nodes
-            nodeCount            = 0;
-            auto resizeNodesLeft = [maxSizeIncrease, resizeDiff, minSize, orientation, isStackVertical, SIZE, &nodeCount, nodesLeft, PNODE](auto& it) {
-                if (it->isMaster != PNODE->isMaster)
-                    return;
-                nodeCount++;
-                // if center orientation, only resize when on the same side
-                if (!it->isMaster && orientation == ORIENTATION_CENTER && nodeCount % 2 == 1)
-                    return;
-                const float size               = isStackVertical ? it->size.y : it->size.x;
-                const float resizeDeltaForEach = maxSizeIncrease != 0 ? resizeDiff * (size - minSize) / maxSizeIncrease : resizeDiff / nodesLeft;
-                it->percSize -= resizeDeltaForEach / SIZE;
-            };
-            if (resizePrevNodes)
-                std::for_each(std::next(REVNODEIT), m_masterNodesData.rend(), resizeNodesLeft);
-            else
-                std::for_each(std::next(NODEIT), m_masterNodesData.end(), resizeNodesLeft);
+        bool hasPrevInColumn = false;
+        bool hasNextInColumn = false;
+        for (auto it = m_masterNodesData.begin(); it != NODEIT; ++it) {
+            if ((*it)->isMaster == PNODE->isMaster)
+                hasPrevInColumn = true;
         }
+        for (auto it = std::next(NODEIT); it != m_masterNodesData.end(); ++it) {
+            if ((*it)->isMaster == PNODE->isMaster)
+                hasNextInColumn = true;
+        }
+
+        bool resizePrevNodes = false;
+        if (*PSMARTRESIZING && !NONE)
+            resizePrevNodes = isStackVertical ? (TOP || DISPLAYBOTTOM) && !DISPLAYTOP : (LEFT || DISPLAYRIGHT) && !DISPLAYLEFT;
+        else if (orientation == ORIENTATION_CENTER)
+            resizePrevNodes = isStackVertical ? (TOP || DISPLAYBOTTOM) && !DISPLAYTOP : (LEFT || DISPLAYRIGHT) && !DISPLAYLEFT;
+        else if (RESIZEDELTA < 0)
+            resizePrevNodes = hasPrevInColumn;
+        else if (RESIZEDELTA > 0)
+            resizePrevNodes = !hasNextInColumn;
+
+        int   nodesLeft = 0;
+        float sizeLeft  = 0;
+        int   nodeCount = 0;
+        // check the sizes of all the nodes to be resized for later calculation
+        auto checkNodesLeft = [&sizeLeft, &nodesLeft, orientation, isStackVertical, &nodeCount, PNODE](auto it) {
+            if (it->isMaster != PNODE->isMaster)
+                return;
+            nodeCount++;
+            if (!it->isMaster && orientation == ORIENTATION_CENTER && nodeCount % 2 == 1)
+                return;
+            sizeLeft += isStackVertical ? it->size.y : it->size.x;
+            nodesLeft++;
+        };
+        float resizeDiff;
+        if (resizePrevNodes) {
+            std::for_each(std::next(REVNODEIT), m_masterNodesData.rend(), checkNodesLeft);
+            resizeDiff = -RESIZEDELTA;
+        } else {
+            std::for_each(std::next(NODEIT), m_masterNodesData.end(), checkNodesLeft);
+            resizeDiff = RESIZEDELTA;
+        }
+
+        if ((!*PSMARTRESIZING || NONE) && orientation != ORIENTATION_CENTER && RESIZEDELTA < 0 && !hasPrevInColumn)
+            resizeDiff = -resizeDiff;
+
+        const float nodeSize        = isStackVertical ? PNODE->size.y : PNODE->size.x;
+        const float maxSizeIncrease = sizeLeft - nodesLeft * minSize;
+        const float maxSizeDecrease = minSize - nodeSize;
+
+        // leaves enough room for the other nodes
+        resizeDiff = std::clamp(resizeDiff, maxSizeDecrease, maxSizeIncrease);
+        PNODE->percSize += resizeDiff / SIZE;
+
+        // resize the other nodes
+        nodeCount            = 0;
+        auto resizeNodesLeft = [maxSizeIncrease, resizeDiff, minSize, orientation, isStackVertical, SIZE, &nodeCount, nodesLeft, PNODE](auto& it) {
+            if (it->isMaster != PNODE->isMaster)
+                return;
+            nodeCount++;
+            // if center orientation, only resize when on the same side
+            if (!it->isMaster && orientation == ORIENTATION_CENTER && nodeCount % 2 == 1)
+                return;
+            const float size               = isStackVertical ? it->size.y : it->size.x;
+            const float resizeDeltaForEach = maxSizeIncrease != 0 ? resizeDiff * (size - minSize) / maxSizeIncrease : resizeDiff / nodesLeft;
+            it->percSize -= resizeDeltaForEach / SIZE;
+        };
+        if (resizePrevNodes)
+            std::for_each(std::next(REVNODEIT), m_masterNodesData.rend(), resizeNodesLeft);
+        else
+            std::for_each(std::next(NODEIT), m_masterNodesData.end(), resizeNodesLeft);
     }
 
     recalculate();
