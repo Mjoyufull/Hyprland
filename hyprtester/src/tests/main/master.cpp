@@ -8,17 +8,20 @@
 #include "tests.hpp"
 
 static int clientHeight(const std::string& cls) {
-    const auto clients = getFromSocket("/clients");
-    const auto tag     = "class: " + cls;
-    const auto pos     = clients.find(tag);
-    if (pos == std::string::npos)
+    const auto clients  = getFromSocket("/clients");
+    const auto tag      = "class: " + cls;
+    const auto classPos = clients.find(tag);
+    if (classPos == std::string::npos)
         return -1;
 
-    const auto sizePos = clients.find("size: ", pos);
-    if (sizePos == std::string::npos)
+    const auto blockStart = clients.rfind("\nWindow ", classPos);
+    const auto blockBegin = blockStart == std::string::npos ? 0 : blockStart + 1;
+
+    const auto sizePos = clients.rfind("size: ", classPos);
+    if (sizePos == std::string::npos || sizePos < blockBegin)
         return -1;
 
-    const auto comma = clients.find(',', sizePos);
+    const auto comma   = clients.find(',', sizePos);
     if (comma == std::string::npos)
         return -1;
 
